@@ -20,8 +20,6 @@ namespace P2P_Chat
         private Socket udpListenSocket;
         private Socket tcpListenSocket;
 
-        //private CancellationToken cancellationToken;
-
         public bool isAlive = false;
 
         public PeerCore(string name, IPAddress myIP)
@@ -54,12 +52,45 @@ namespace P2P_Chat
             await udpSendSocket.SendToAsync(dataName, broadcastPoint);
         }
 
-        private async Task ListenTCPAsync()
+        private async Task ListenUDPAsync()
         {
+            byte[] buffer = new byte[1024];
+            EndPoint anyEndPoint = new IPEndPoint(IPAddress.Any, 0);
+            while (isAlive)
+            {
+                try
+                {
+                    var result = await udpListenSocket.ReceiveFromAsync(buffer, anyEndPoint);
+                    int received = result.ReceivedBytes;
+                    IPEndPoint remoteIPEndPoint = (IPEndPoint)result.RemoteEndPoint;
+                    string remoteName = Encoding.UTF8.GetString(buffer, 0, received);
 
+                    if (remoteIPEndPoint.Address == myIP) continue;
+                    if (!peers.ContainsKey(remoteIPEndPoint))
+                    {
+                        _ = ConnectToPeerTCPAsync(remoteIPEndPoint, remoteName);
+                    }
+                }
+                catch (SocketException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.ToString());
+                }
+            }
         }
 
-        private async Task ListenUDPAsync()
+        private async Task ListenTCPAsync()
+        {
+            while (isAlive)
+            {
+
+            }
+        }
+
+        private async Task ConnectToPeerTCPAsync(IPEndPoint EndPoint, string PeerName)
         {
 
         }
@@ -69,7 +100,6 @@ namespace P2P_Chat
             isAlive = false;
             udpListenSocket.Dispose();
             tcpListenSocket.Dispose();
-            //cancellationToken.ThrowIfCancellationRequested();
         }
     }
 }
