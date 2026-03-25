@@ -18,15 +18,15 @@ namespace P2P_Chat
                 string time = Timestamp.ToString("g");
                 switch (Type)
                 {
-                    case "MyMessage":
-                        return $"[{time}] Вы: {Text}";
-                    case "Message":
+                    case "Message": //1
                         return $"[{time}] {Name} ({Ip}): {Text}";
-                    case "PeerJoin":
+                    case "MyMessage": //1
+                        return $"[{time}] Вы: {Text}";
+                    case "Name": //2
                         return $"[{time}] {Name} ({Ip}): Присоединился";
-                    case "PeerLeft":
+                    case "PeerLeft": //3
                         return $"[{time}] {Name} ({Ip}): Отсоединился";
-                    default:
+                    default: //?
                         return $"[{time}]: {Text}";
                 }
             } 

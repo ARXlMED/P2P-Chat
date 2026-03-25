@@ -22,12 +22,13 @@ namespace P2P_Chat
 
         public bool isAlive = false;
 
-        public ChatEvent nowEvent;
+        public event Action<ChatEvent> nowEvent;
 
         public PeerCore(string name, IPAddress myIP)
         {
             this.name = name;
             this.myIP = myIP;
+            peers = new ConcurrentDictionary<IPEndPoint, PeerInfo>();
         }
 
         public async Task StartAsync()
@@ -39,7 +40,7 @@ namespace P2P_Chat
             _ = Task.Run(() => ListenUDPAsync());
             
             tcpListenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            tcpListenSocket.Bind(new IPEndPoint(IPAddress.Any, tcpPort));
+            tcpListenSocket.Bind(new IPEndPoint(myIP, tcpPort));
             _ = Task.Run(() => ListenTCPAsync());
 
             await SendBroadcastUDPAsync();
@@ -123,13 +124,85 @@ namespace P2P_Chat
             }
         }
 
-        // главный метод обработки tcp соединений
-        private async Task HandlerTCPConnectionAsync(Socket socket, IPEndPoint iPEndPoint, string PeerName)
+        // главный метод установки tcp соединений и обработки их для отправки в UI
+        private async Task HandlerTCPConnectionAsync(Socket socket, IPEndPoint remoteEndPoint, string ExpectedPeerName)
         {
+            try
+            {
+                await SendMessageTCPAsync(socket, 2, ConvertToByte(name));
 
+                var (typeName, dataName) = await ReceiveMessageTCPAsync(socket);
+                if (typeName != 2)
+                {
+                    socket.Close();
+                    return;
+                }
+                string RealPeerName = Encoding.UTF8.GetString(dataName);
+
+                if (ExpectedPeerName != RealPeerName)
+                {
+                    socket.Close();
+                    return;
+                }
+
+                PeerInfo peerInfo = new PeerInfo 
+                {
+                    Name = RealPeerName,
+                    Socket = socket
+                };
+                peers[remoteEndPoint] = peerInfo;
+
+                // отображение имени того кто зашел в UI
+                nowEvent?.Invoke(new ChatEvent
+                {
+                    Timestamp = DateTime.Now,
+                    Type = "Name",
+                    Name = RealPeerName,
+                    Ip = remoteEndPoint.Address.ToString(),
+                    Text = null
+                });
+
+                while (isAlive && socket.Connected)
+                {
+                    var (typeMessage, dataMessage) = await ReceiveMessageTCPAsync(socket);
+                    if (typeMessage == 0) break;
+                    switch (typeMessage)
+                    {
+                        case 1: 
+                            string stringMessage = Encoding.UTF8.GetString(dataMessage);
+                            // отображение сообщения которое пришло нам
+                            nowEvent?.Invoke(new ChatEvent
+                            {
+                                Timestamp = DateTime.Now,
+                                Type = "Message",
+                                Name = RealPeerName,
+                                Ip = remoteEndPoint.Address.ToString(),
+                                Text = stringMessage
+                            });
+                            break;
+                        case 3:
+                            // отображение заверешния соединения с узлом
+                            nowEvent?.Invoke(new ChatEvent
+                            {
+                                Timestamp = DateTime.Now,
+                                Type = "CloseConnection",
+                                Name = RealPeerName,
+                                Ip = remoteEndPoint.Address.ToString(),
+                                Text = null
+                            });
+                            return;
+                    }
+                }
+            }
+            catch (SocketException) { }
+            catch (Exception ex) { Console.WriteLine(ex.ToString()); }
+            finally
+            {
+                socket?.Close();
+            }
         }
 
-        // отправка сообщения всем пирам к которым есть подключение
+        // отправка сообщения всем пирам к которым есть подключение, используется во ViewModel
         private async Task BroadCastMessageTCPAsync(byte[] data, byte type = 1)
         {
             foreach (var peer in peers.Values)
@@ -143,12 +216,20 @@ namespace P2P_Chat
                     Console.WriteLine(ex.ToString());
                 }
             }
-
+            nowEvent?.Invoke(new ChatEvent
+            {
+                Timestamp = DateTime.Now,
+                Type = "MyMessage",
+                Name = name,
+                Ip = myIP.ToString(),
+                Text = Encoding.UTF8.GetString(data)
+            });
         }
 
         // отправка сообщения конкретному пиру
         private async Task SendMessageTCPAsync(Socket socket, byte type, byte[] data)
         {
+            if (socket == null || !socket.Connected) return;
             ushort len = (ushort)data.Length;
             byte[] header = new byte[3];
             header[0] = type;
@@ -190,7 +271,7 @@ namespace P2P_Chat
             {
                 try
                 {
-                    SendMessageTCPAsync(peer.Socket, 4, ConvertToByte("")).Wait();
+                    SendMessageTCPAsync(peer.Socket, 3, ConvertToByte("")).Wait();
                 }
                 catch { }
                 finally

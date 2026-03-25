@@ -6,6 +6,6 @@ namespace P2P_Chat
 {
     class MainWindowViewModel
     {
-
+        
     }
 }

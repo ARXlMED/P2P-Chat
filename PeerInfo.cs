@@ -5,14 +5,9 @@ using System.Text;
 
 namespace P2P_Chat
 {
-    public class PeerInfo : IDisposable
+    public class PeerInfo 
     {
         public Socket Socket { get; set; }
         public string Name { get; set; }
-
-        public void Dispose()
-        {
-            Socket?.Dispose();
-        }
     }
 }
