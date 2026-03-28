@@ -24,13 +24,18 @@ namespace P2P_Chat
                         return $"[{time}] Вы: {Text}";
                     case "Name": //2
                         return $"[{time}] {Name} ({Ip}): Присоединился";
-                    case "PeerLeft": //3
+                    case "CloseConnection": //3
                         return $"[{time}] {Name} ({Ip}): Отсоединился";
                     default: //?
                         return $"[{time}]: {Text}";
                 }
             } 
         }
-
+        public override string ToString()
+        {
+            return FinalMessage;
+        }
     }
+
+
 }

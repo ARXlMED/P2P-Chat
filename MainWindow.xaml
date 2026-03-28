@@ -18,8 +18,8 @@
         </Grid.ColumnDefinitions>
 
         <TextBlock Text="P2P-Chat" TextAlignment="Center" FontSize="28" Grid.Row="0" Grid.ColumnSpan="2"/>
-        <ListBox ItemsSource="{Binding ChatEvents}" Grid.Row="1" Grid.ColumnSpan="2" ScrollViewer.CanContentScroll="True" Background="Ivory" Foreground="Black" />
-        <TextBox Text="{Binding TextMessage, UpdateSourceTrigger=PropertyChanged}" Height="32" Grid.Row="2" Grid.Column="0" Margin="15"/>
+        <ListBox x:Name="MessagesListBox" ItemsSource="{Binding ChatEvents}" Grid.Row="1" Grid.ColumnSpan="2" ScrollViewer.CanContentScroll="True" Background="Ivory" Foreground="Black" />
+        <TextBox Text="{Binding TextMessage, UpdateSourceTrigger=PropertyChanged}" Height="36" Grid.Row="2" Grid.Column="0" Margin="15" VerticalContentAlignment="Center" FontSize="24"/>
         <Button Command="{Binding SendMessageCommand}" Grid.Row="2" Grid.Column="1" Height="48" Width="48" Margin="0,0,5,0">
             <Image Source="/Images/3682321.png" Width="32" Height="32"/>
         </Button>

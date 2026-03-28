@@ -4,16 +4,18 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
+using System.Windows;
 
 namespace P2P_Chat
 {
     public class PeerCore : IDisposable
     {
-        private readonly int tcpPort = 14239;
-        private readonly int udpPort = 32478;
-
         public string name;
         public IPAddress myIP;
+        public int tcpPort;
+        public int udpPort;
+        private readonly Guid instanceId = Guid.NewGuid();
 
         private ConcurrentDictionary<IPEndPoint, PeerInfo> peers; // adr + name
 
@@ -24,10 +26,14 @@ namespace P2P_Chat
 
         public event Action<ChatEvent> nowEvent;
 
-        public PeerCore(string name, IPAddress myIP)
+
+
+        public PeerCore(string name, IPAddress myIP, int TCPPort = 12345, int UDPPort = 12346)
         {
             this.name = name;
             this.myIP = myIP;
+            this.tcpPort = TCPPort;
+            this.udpPort = UDPPort;
             peers = new ConcurrentDictionary<IPEndPoint, PeerInfo>();
         }
 
@@ -36,42 +42,70 @@ namespace P2P_Chat
             isAlive = true;
 
             udpListenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            udpListenSocket.Bind(new IPEndPoint(IPAddress.Any, udpPort));
+            udpListenSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            udpListenSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
+            udpListenSocket.Bind(new IPEndPoint(myIP, udpPort));
             _ = Task.Run(() => ListenUDPAsync());
             
             tcpListenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             tcpListenSocket.Bind(new IPEndPoint(myIP, tcpPort));
+            tcpListenSocket.Listen(100);
             _ = Task.Run(() => ListenTCPAsync());
 
             await SendBroadcastUDPAsync();
         }
 
+        private IPAddress GetBroadcastAddress()
+        {
+            if (IPAddress.IsLoopback(myIP))
+                return IPAddress.Parse("127.255.255.255");
+
+            return IPAddress.Broadcast;
+        }
+
         private async Task SendBroadcastUDPAsync()
         {
-            Socket udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             udpSendSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
-            byte[] dataName = Encoding.UTF8.GetBytes(name);
-            IPEndPoint broadcastPoint = new IPEndPoint(IPAddress.Broadcast, udpPort);
-            await udpSendSocket.SendToAsync(dataName, broadcastPoint);
+
+            var packet = new DiscoveryPacket
+            {
+                Id = instanceId,
+                Name = name,
+                TcpPort = tcpPort
+            };
+
+            byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
+            var broadcastPoint = new IPEndPoint(GetBroadcastAddress(), udpPort);
+
+            await udpSendSocket.SendToAsync(data, broadcastPoint);
         }
 
         private async Task ListenUDPAsync()
         {
             byte[] buffer = new byte[1024];
             EndPoint anyEndPoint = new IPEndPoint(IPAddress.Any, 0);
+
             while (isAlive)
             {
                 try
                 {
                     var result = await udpListenSocket.ReceiveFromAsync(buffer, anyEndPoint);
                     int received = result.ReceivedBytes;
-                    IPEndPoint remoteIPEndPoint = (IPEndPoint)result.RemoteEndPoint;
-                    string remoteName = Encoding.UTF8.GetString(buffer, 0, received);
+                    IPEndPoint remoteUdpEndPoint = (IPEndPoint)result.RemoteEndPoint;
 
-                    if (remoteIPEndPoint.Address == myIP) continue;
-                    if (!peers.ContainsKey(remoteIPEndPoint))
+                    var packet = JsonSerializer.Deserialize<DiscoveryPacket>(Encoding.UTF8.GetString(buffer, 0, received));
+
+                    if (packet == null) continue;
+                    if (packet.Id == instanceId) continue; 
+
+                    var tcpEndPoint = new IPEndPoint(remoteUdpEndPoint.Address, packet.TcpPort);
+
+                    MessageBox.Show($"UDP получен от {remoteUdpEndPoint.Address}:{remoteUdpEndPoint.Port}");
+
+                    if (!peers.ContainsKey(tcpEndPoint))
                     {
-                        _ = ConnectToPeerTCPAsync(remoteIPEndPoint, remoteName);
+                        _ = ConnectToPeerTCPAsync(tcpEndPoint, packet.Name);
                     }
                 }
                 catch (SocketException)
@@ -139,7 +173,7 @@ namespace P2P_Chat
                 }
                 string RealPeerName = Encoding.UTF8.GetString(dataName);
 
-                if (ExpectedPeerName != RealPeerName)
+                if (ExpectedPeerName != null && ExpectedPeerName != RealPeerName)
                 {
                     socket.Close();
                     return;
@@ -151,8 +185,9 @@ namespace P2P_Chat
                     Socket = socket
                 };
                 peers[remoteEndPoint] = peerInfo;
+                MessageBox.Show($"Peer added: {RealPeerName} at {remoteEndPoint}");
 
-                // отображение имени того кто зашел в UI
+                // отображение имени того кто зашел
                 nowEvent?.Invoke(new ChatEvent
                 {
                     Timestamp = DateTime.Now,
@@ -203,7 +238,7 @@ namespace P2P_Chat
         }
 
         // отправка сообщения всем пирам к которым есть подключение, используется во ViewModel
-        private async Task BroadCastMessageTCPAsync(byte[] data, byte type = 1)
+        public async Task BroadCastMessageTCPAsync(byte[] data, byte type = 1)
         {
             foreach (var peer in peers.Values)
             {
@@ -226,6 +261,30 @@ namespace P2P_Chat
             });
         }
 
+        private async Task ReceiveExactAsync(Socket socket, Memory<byte> buffer)
+        {
+            int offset = 0;
+            while (offset < buffer.Length)
+            {
+                int got = await socket.ReceiveAsync(buffer.Slice(offset), SocketFlags.None);
+                if (got == 0)
+                    throw new SocketException();
+                offset += got;
+            }
+        }
+
+        private async Task SendExactAsync(Socket socket, ReadOnlyMemory<byte> buffer)
+        {
+            int offset = 0;
+            while (offset < buffer.Length)
+            {
+                int sent = await socket.SendAsync(buffer.Slice(offset), SocketFlags.None);
+                if (sent == 0)
+                    throw new SocketException();
+                offset += sent;
+            }
+        }
+
         // отправка сообщения конкретному пиру
         private async Task SendMessageTCPAsync(Socket socket, byte type, byte[] data)
         {
@@ -235,25 +294,18 @@ namespace P2P_Chat
             header[0] = type;
             header[1] = (byte)(len >> 8);
             header[2] = (byte)(len & 0xFF);
-            await socket.SendAsync(header);
-            await socket.SendAsync(data);
+            await SendExactAsync(socket, header);
+            await SendExactAsync(socket, data);
         }
 
         private async Task<(byte type, byte[] data)> ReceiveMessageTCPAsync(Socket socket)
         {
             byte[] header = new byte[3];
-            int received = await socket.ReceiveAsync(header);
-            if (received != 3) return (0, null);
+            await ReceiveExactAsync(socket, header);
             byte type = header[0];
             int len = (header[1] << 8) | header[2];
             byte[] data = new byte[len];
-            int offset = 0;
-            while (offset < len)
-            {
-                int got = await socket.ReceiveAsync(data.AsMemory(offset, len - offset));
-                if (got == 0) return (0, null);
-                offset += got;
-            }
+            if (len > 0) await ReceiveExactAsync(socket, data);
             return (type, data);
         }
 
@@ -279,8 +331,8 @@ namespace P2P_Chat
                     peer.Socket?.Close();
                 }
             }
-            tcpListenSocket.Close();
-            udpListenSocket.Close();
+            tcpListenSocket?.Close();
+            udpListenSocket?.Close();
             peers.Clear();
         }
     }
