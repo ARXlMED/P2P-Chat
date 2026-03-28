@@ -9,7 +9,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 
-namespace P2P_Chat
+namespace P2P_Chat.Core
 {
     public class PeerCore : IDisposable
     {

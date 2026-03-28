@@ -1,4 +1,5 @@
-﻿using P2P_Chat.Models;
+﻿using P2P_Chat.Core;
+using P2P_Chat.Models;
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -10,7 +11,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 
-namespace P2P_Chat
+namespace P2P_Chat.ViewModels
 {
     public class MainWindowViewModel : IDisposable, INotifyPropertyChanged
     {
