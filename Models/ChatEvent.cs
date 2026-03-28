@@ -26,7 +26,7 @@ namespace P2P_Chat.Models
                         return $"[{time}] {Name} ({Ip}): Присоединился";
                     case "CloseConnection": //3
                         return $"[{time}] {Name} ({Ip}): Отсоединился";
-                    case "History":
+                    case "History": //4
                         return $"[{time}] {Name} ({Ip}): {Text}";
                     default: //?
                         return $"[{time}]: {Text}";
