@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Text;
 
-namespace P2P_Chat
+namespace P2P_Chat.Models
 {
     public class PeerInfo 
     {

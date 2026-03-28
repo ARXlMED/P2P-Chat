@@ -5,6 +5,7 @@ using System.Net;
 using System.Windows;
 using System.Text;
 using System.Runtime.CompilerServices;
+using P2P_Chat.Models;
 
 namespace P2P_Chat
 {

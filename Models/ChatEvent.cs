@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace P2P_Chat
+namespace P2P_Chat.Models
 {
     public class ChatEvent
     {
@@ -26,6 +26,8 @@ namespace P2P_Chat
                         return $"[{time}] {Name} ({Ip}): Присоединился";
                     case "CloseConnection": //3
                         return $"[{time}] {Name} ({Ip}): Отсоединился";
+                    case "History":
+                        return $"[{time}] {Name} ({Ip}): {Text}";
                     default: //?
                         return $"[{time}]: {Text}";
                 }

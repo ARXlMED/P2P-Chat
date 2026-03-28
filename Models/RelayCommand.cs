@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Windows.Input;
 
-namespace P2P_Chat
+namespace P2P_Chat.Models
 {
     public class RelayCommand : ICommand
     {

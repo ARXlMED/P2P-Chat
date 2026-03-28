@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace P2P_Chat
+namespace P2P_Chat.Models
 {
     public class DiscoveryPacket
     {
