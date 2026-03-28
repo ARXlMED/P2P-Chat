@@ -105,7 +105,7 @@ namespace P2P_Chat.Core
 
                     var tcpEndPoint = new IPEndPoint(remoteUdpEndPoint.Address, packet.TcpPort);
 
-                    MessageBox.Show($"UDP получен от {remoteUdpEndPoint.Address}:{remoteUdpEndPoint.Port}");
+                    //MessageBox.Show($"UDP получен от {remoteUdpEndPoint.Address}:{remoteUdpEndPoint.Port}");
 
                     if (!peers.ContainsKey(tcpEndPoint))
                     {
