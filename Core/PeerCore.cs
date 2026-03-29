@@ -19,7 +19,7 @@ namespace P2P_Chat.Core
         public int udpPort;
         private Guid instanceId = Guid.NewGuid();
 
-        private ConcurrentDictionary<IPEndPoint, PeerInfo> peers; // adr + name
+        private ConcurrentDictionary<IPEndPoint, PeerInfo> peers; // peerinfo - name + socket
 
         private Socket udpListenSocket;
         private Socket tcpListenSocket;
@@ -31,6 +31,8 @@ namespace P2P_Chat.Core
         private object historyLock = new();
         private List<ChatEvent> history = new();
         private HashSet<string> historyKeys = new();
+        private bool historyRequested = false;
+        private bool historyReceived = false;
 
         public PeerCore(string name, IPAddress myIP, int TCPPort = 12345, int UDPPort = 12346)
         {
@@ -154,7 +156,7 @@ namespace P2P_Chat.Core
             try
             {
                 await socket.ConnectAsync(endPoint);
-                await HandlerTCPConnectionAsync(socket, endPoint, peerName, requestHistory: true);
+                await HandlerTCPConnectionAsync(socket, endPoint, peerName, requestHistory: true); 
             }
             catch
             {
@@ -201,9 +203,19 @@ namespace P2P_Chat.Core
                     Text = null
                 });
 
-                if (requestHistory)
+                bool needHistory = false;
+                lock (historyLock)
                 {
-                    await SendMessageTCPAsync(socket, 4, Array.Empty<byte>());
+                    if (requestHistory && !historyRequested && !historyReceived)
+                    {
+                        historyRequested = true;
+                        needHistory = true;
+                    }
+                }
+
+                if (needHistory)
+                {
+                    await SendMessageTCPAsync(socket, 4, new byte[0]);
                 }
 
                 while (isAlive && socket.Connected)
@@ -254,6 +266,7 @@ namespace P2P_Chat.Core
                                     {
                                         MergeReceivedHistory(incomingHistory, remoteEndPoint);
                                     }
+                                    historyReceived = true;
                                 }
                                 break;
                             }
@@ -269,6 +282,13 @@ namespace P2P_Chat.Core
             {
                 socket?.Close();
                 peers.TryRemove(remoteEndPoint, out _);
+                lock (historyLock)
+                {
+                    if (!historyReceived)
+                    {
+                        historyRequested = false;
+                    }
+                }
             }
         }
 
@@ -423,13 +443,13 @@ namespace P2P_Chat.Core
 
             if (added > 0)
             {
-                PublishEvent(new ChatEvent
+                nowEvent?.Invoke(new ChatEvent
                 {
                     Timestamp = DateTime.Now,
                     Type = "History",
-                    Name = "Система",
+                    Name = "System",
                     Ip = from.Address.ToString(),
-                    Text = $"получена история: {added} событий"
+                    Text = $"Получено {added} событий истории"
                 });
             }
         }
