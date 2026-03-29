@@ -194,15 +194,7 @@ namespace P2P_Chat.Core
 
                 peers[remoteEndPoint] = peerInfo;
 
-                PublishEvent(new ChatEvent
-                {
-                    Timestamp = DateTime.Now,
-                    Type = "Name",
-                    Name = RealPeerName,
-                    Ip = remoteEndPoint.Address.ToString(),
-                    Text = null
-                });
-
+                
                 bool needHistory = false;
                 lock (historyLock)
                 {
@@ -217,6 +209,15 @@ namespace P2P_Chat.Core
                 {
                     await SendMessageTCPAsync(socket, 4, new byte[0]);
                 }
+
+                PublishEvent(new ChatEvent
+                {
+                    Timestamp = DateTime.Now,
+                    Type = "Name",
+                    Name = RealPeerName,
+                    Ip = remoteEndPoint.Address.ToString(),
+                    Text = null
+                });
 
                 while (isAlive && socket.Connected)
                 {
