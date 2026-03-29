@@ -9,5 +9,6 @@ namespace P2P_Chat.Models
         public Guid Id { get; set; }
         public string Name { get; set; }
         public int TcpPort { get; set; }
+        public bool Broadcast { get; set; }
     }
 }

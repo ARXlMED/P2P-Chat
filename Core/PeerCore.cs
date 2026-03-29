@@ -20,6 +20,7 @@ namespace P2P_Chat.Core
         private Guid instanceId = Guid.NewGuid();
 
         private ConcurrentDictionary<IPEndPoint, PeerInfo> peers; // peerinfo - name + socket
+        private ConcurrentDictionary<IPEndPoint, bool> connecting = new();
 
         private Socket udpListenSocket;
         private Socket tcpListenSocket;
@@ -78,7 +79,8 @@ namespace P2P_Chat.Core
             {
                 Id = instanceId,
                 Name = name,
-                TcpPort = tcpPort
+                TcpPort = tcpPort,
+                Broadcast = true
             };
 
             byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
@@ -111,7 +113,14 @@ namespace P2P_Chat.Core
 
                     if (!peers.ContainsKey(tcpEndPoint))
                     {
-                        _ = ConnectToPeerTCPAsync(tcpEndPoint, packet.Name);
+                        if (packet.Broadcast == true)
+                        {
+                            await AnswerToBroadcastUDPAsync(new IPEndPoint(remoteUdpEndPoint.Address, udpPort));
+                        }
+                        else if (packet.Broadcast == false)
+                        {
+                            _ = ConnectToPeerTCPAsync(tcpEndPoint, packet.Name);
+                        }
                     }
                 }
                 catch (SocketException)
@@ -123,6 +132,23 @@ namespace P2P_Chat.Core
                     Console.WriteLine(ex.ToString());
                 }
             }
+        }
+
+        // отвечает на broadcast udp своим udp пакетом со всеми данными уже старого узла
+        private async Task AnswerToBroadcastUDPAsync(IPEndPoint address)
+        {
+            using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+            var packet = new DiscoveryPacket
+            {
+                Id = instanceId,
+                Name = name,
+                TcpPort = tcpPort,
+                Broadcast = false
+            };
+
+            byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
+            await udpSendSocket.SendToAsync(data, address);
         }
 
         // слушает на TCP
@@ -147,20 +173,34 @@ namespace P2P_Chat.Core
             }
         }
 
-        // соединяет с пиром после получения UDP
+        // соединяет с пиром после получения UDP ответного (новый узел соединяется со старыми0
         private async Task ConnectToPeerTCPAsync(IPEndPoint endPoint, string peerName) 
         {
             if (peers.ContainsKey(endPoint)) return;
+            if (!connecting.TryAdd(endPoint, true)) return;
 
             var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             try
             {
                 await socket.ConnectAsync(endPoint);
-                await HandlerTCPConnectionAsync(socket, endPoint, peerName, requestHistory: true); 
+                bool request = false;
+                lock (historyLock)
+                {
+                    if (!historyRequested)
+                    {
+                        historyRequested = true;
+                        request = true;
+                    }
+                }
+                await HandlerTCPConnectionAsync(socket, endPoint, peerName, request); 
             }
             catch
             {
                 socket.Close();
+            }
+            finally
+            {
+                connecting.TryRemove(endPoint, out _);
             }
         }
 
@@ -194,18 +234,7 @@ namespace P2P_Chat.Core
 
                 peers[remoteEndPoint] = peerInfo;
 
-                
-                bool needHistory = false;
-                lock (historyLock)
-                {
-                    if (requestHistory && !historyRequested && !historyReceived)
-                    {
-                        historyRequested = true;
-                        needHistory = true;
-                    }
-                }
-
-                if (needHistory)
+                if (requestHistory)
                 {
                     await SendMessageTCPAsync(socket, 4, new byte[0]);
                 }
