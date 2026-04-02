@@ -1,10 +1,9 @@
 ﻿using P2P_Chat.Models;
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -17,7 +16,7 @@ namespace P2P_Chat.Core
         public IPAddress myIP;
         public int tcpPort;
         public int udpPort;
-        private Guid instanceId = Guid.NewGuid();
+        private Guid instanceId = Guid.NewGuid(); // для отличия друг от друга узлов, кроме имён и ip
 
         private ConcurrentDictionary<IPEndPoint, PeerInfo> peers; // peerinfo - name + socket
         private ConcurrentDictionary<IPEndPoint, bool> connecting = new();
@@ -64,17 +63,26 @@ namespace P2P_Chat.Core
 
         private IPAddress GetBroadcastAddress()
         {
-            if (IPAddress.IsLoopback(myIP))
-                return IPAddress.Parse("127.255.255.255");
+            //if (IPAddress.IsLoopback(myIP))
+            //    return IPAddress.Parse("127.255.255.255");
 
             return IPAddress.Broadcast;
         }
 
+        private IPAddress CalculateBroadcastAddress(IPAddress ip, IPAddress mask)
+        {
+            byte[] ipBytes = ip.GetAddressBytes();
+            byte[] maskBytes = mask.GetAddressBytes();
+            byte[] broadcastBytes = new byte[4];
+            for (int i = 0; i < 4; i++)
+            {
+                broadcastBytes[i] = (byte)(ipBytes[i] | ~maskBytes[i]);
+            }
+            return new IPAddress(broadcastBytes);
+        }
+
         private async Task SendBroadcastUDPAsync()
         {
-            using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            udpSendSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
-
             var packet = new DiscoveryPacket
             {
                 Id = instanceId,
@@ -82,12 +90,55 @@ namespace P2P_Chat.Core
                 TcpPort = tcpPort,
                 Broadcast = true
             };
-
             byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
-            var broadcastPoint = new IPEndPoint(GetBroadcastAddress(), udpPort);
 
-            await udpSendSocket.SendToAsync(data, broadcastPoint);
+            var networkInterfaces = NetworkInterface.GetAllNetworkInterfaces();
+
+            foreach (var netInterface in networkInterfaces)
+            {
+                if (netInterface.OperationalStatus != OperationalStatus.Up) continue;
+                if (netInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+
+                var ipProps = netInterface.GetIPProperties();
+                foreach (var unicastAddr in ipProps.UnicastAddresses)
+                {
+                    if (unicastAddr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                    if (unicastAddr.IPv4Mask == null) continue;
+
+                    IPAddress broadcastAddr = CalculateBroadcastAddress(unicastAddr.Address, unicastAddr.IPv4Mask);
+
+                    using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                    udpSendSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
+
+                    var endPoint = new IPEndPoint(broadcastAddr, udpPort);
+                    try
+                    {
+                        await udpSendSocket.SendToAsync(data, endPoint);
+
+                    }
+                    catch { }
+                }
+            }
         }
+
+        //private async Task SendBroadcastUDPAsync()
+        //{
+        //    using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        //    udpSendSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
+
+        //    var packet = new DiscoveryPacket
+        //    {
+        //        Id = instanceId,
+        //        Name = name,
+        //        TcpPort = tcpPort,
+        //        Broadcast = true
+        //    };
+
+        //    byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
+        //    var broadcastPoint = new IPEndPoint(GetBroadcastAddress(), udpPort);
+
+        //    await udpSendSocket.SendToAsync(data, broadcastPoint);
+        //}
 
         private async Task ListenUDPAsync()
         {
@@ -152,7 +203,7 @@ namespace P2P_Chat.Core
         }
 
         // слушает на TCP
-        private async Task ListenTCPAsync() 
+        private async Task ListenTCPAsync()
         {
             while (isAlive)
             {

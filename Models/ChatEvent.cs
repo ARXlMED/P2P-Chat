@@ -11,8 +11,8 @@ namespace P2P_Chat.Models
         public string Name { get; set; }
         public string Ip { get; set; }
         public string Text { get; set; }
-        public string FinalMessage 
-        { 
+        public string FinalMessage
+        {
             get
             {
                 string time = Timestamp.ToString("g");
@@ -31,7 +31,7 @@ namespace P2P_Chat.Models
                     default: //?
                         return $"[{time}]: {Text}";
                 }
-            } 
+            }
         }
         public override string ToString()
         {
