@@ -1,11 +1,14 @@
 ﻿using P2P_Chat.Models;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using System.Windows;
 
 namespace P2P_Chat.Core
@@ -16,9 +19,9 @@ namespace P2P_Chat.Core
         public IPAddress myIP;
         public int tcpPort;
         public int udpPort;
-        private Guid instanceId = Guid.NewGuid(); // для отличия друг от друга узлов, кроме имён и ip
+        private Guid instanceId = Guid.NewGuid();
 
-        private ConcurrentDictionary<IPEndPoint, PeerInfo> peers; // peerinfo - name + socket
+        private ConcurrentDictionary<IPEndPoint, PeerInfo> peers;
         private ConcurrentDictionary<IPEndPoint, bool> connecting = new();
 
         private Socket udpListenSocket;
@@ -34,6 +37,8 @@ namespace P2P_Chat.Core
         private bool historyRequested = false;
         private bool historyReceived = false;
 
+        private bool isLoopBack;
+
         public PeerCore(string name, IPAddress myIP, int TCPPort = 12345, int UDPPort = 12346)
         {
             this.name = name;
@@ -41,6 +46,7 @@ namespace P2P_Chat.Core
             this.tcpPort = TCPPort;
             this.udpPort = UDPPort;
             peers = new ConcurrentDictionary<IPEndPoint, PeerInfo>();
+            isLoopBack = IPAddress.IsLoopback(myIP);
         }
 
         public async Task StartAsync()
@@ -61,12 +67,14 @@ namespace P2P_Chat.Core
             await SendBroadcastUDPAsync();
         }
 
-        private IPAddress GetBroadcastAddress()
+        private IEnumerable<IPAddress> GetLoopbackTargets(IPAddress self)
         {
-            //if (IPAddress.IsLoopback(myIP))
-            //    return IPAddress.Parse("127.255.255.255");
-
-            return IPAddress.Broadcast;
+            for (int i = 1; i <= 254; i++)
+            {
+                var ip = IPAddress.Parse($"127.0.0.{i}");
+                if (!ip.Equals(self))
+                    yield return ip;
+            }
         }
 
         private IPAddress CalculateBroadcastAddress(IPAddress ip, IPAddress mask)
@@ -90,7 +98,29 @@ namespace P2P_Chat.Core
                 TcpPort = tcpPort,
                 Broadcast = true
             };
+
             byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
+
+            using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            udpSendSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
+
+            if (isLoopBack)
+            {
+                udpSendSocket.Bind(new IPEndPoint(myIP, 0));
+
+                foreach (var targetIp in GetLoopbackTargets(myIP))
+                {
+                    try
+                    {
+                        await udpSendSocket.SendToAsync(data, new IPEndPoint(targetIp, udpPort));
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                return;
+            }
 
             var networkInterfaces = NetworkInterface.GetAllNetworkInterfaces();
 
@@ -107,38 +137,15 @@ namespace P2P_Chat.Core
 
                     IPAddress broadcastAddr = CalculateBroadcastAddress(unicastAddr.Address, unicastAddr.IPv4Mask);
 
-                    using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-                    udpSendSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
-
                     var endPoint = new IPEndPoint(broadcastAddr, udpPort);
                     try
                     {
                         await udpSendSocket.SendToAsync(data, endPoint);
-
                     }
                     catch { }
                 }
             }
         }
-
-        //private async Task SendBroadcastUDPAsync()
-        //{
-        //    using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        //    udpSendSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
-
-        //    var packet = new DiscoveryPacket
-        //    {
-        //        Id = instanceId,
-        //        Name = name,
-        //        TcpPort = tcpPort,
-        //        Broadcast = true
-        //    };
-
-        //    byte[] data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(packet));
-        //    var broadcastPoint = new IPEndPoint(GetBroadcastAddress(), udpPort);
-
-        //    await udpSendSocket.SendToAsync(data, broadcastPoint);
-        //}
 
         private async Task ListenUDPAsync()
         {
@@ -156,11 +163,9 @@ namespace P2P_Chat.Core
                     var packet = JsonSerializer.Deserialize<DiscoveryPacket>(Encoding.UTF8.GetString(buffer, 0, received));
 
                     if (packet == null) continue;
-                    if (packet.Id == instanceId) continue; 
+                    if (packet.Id == instanceId) continue;
 
                     var tcpEndPoint = new IPEndPoint(remoteUdpEndPoint.Address, packet.TcpPort);
-
-                    //MessageBox.Show($"UDP получен от {remoteUdpEndPoint.Address}:{remoteUdpEndPoint.Port}");
 
                     if (!peers.ContainsKey(tcpEndPoint))
                     {
@@ -185,10 +190,14 @@ namespace P2P_Chat.Core
             }
         }
 
-        // отвечает на broadcast udp своим udp пакетом со всеми данными уже старого узла
         private async Task AnswerToBroadcastUDPAsync(IPEndPoint address)
         {
             using var udpSendSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+            if (isLoopBack)
+            {
+                udpSendSocket.Bind(new IPEndPoint(myIP, 0));
+            }
 
             var packet = new DiscoveryPacket
             {
@@ -202,7 +211,6 @@ namespace P2P_Chat.Core
             await udpSendSocket.SendToAsync(data, address);
         }
 
-        // слушает на TCP
         private async Task ListenTCPAsync()
         {
             while (isAlive)
@@ -224,13 +232,14 @@ namespace P2P_Chat.Core
             }
         }
 
-        // соединяет с пиром после получения UDP ответного (новый узел соединяется со старыми0
-        private async Task ConnectToPeerTCPAsync(IPEndPoint endPoint, string peerName) 
+        private async Task ConnectToPeerTCPAsync(IPEndPoint endPoint, string peerName)
         {
             if (peers.ContainsKey(endPoint)) return;
             if (!connecting.TryAdd(endPoint, true)) return;
 
             var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            socket.Bind(new IPEndPoint(myIP, 0));
+
             try
             {
                 await socket.ConnectAsync(endPoint);
@@ -243,7 +252,7 @@ namespace P2P_Chat.Core
                         request = true;
                     }
                 }
-                await HandlerTCPConnectionAsync(socket, endPoint, peerName, request); 
+                await HandlerTCPConnectionAsync(socket, endPoint, peerName, request);
             }
             catch
             {
@@ -255,7 +264,6 @@ namespace P2P_Chat.Core
             }
         }
 
-        // главный метод установки tcp соединений и обработки их для отправки в UI
         private async Task HandlerTCPConnectionAsync(Socket socket, IPEndPoint remoteEndPoint, string ExpectedPeerName, bool requestHistory)
         {
             try
@@ -373,7 +381,6 @@ namespace P2P_Chat.Core
             }
         }
 
-        // отправка сообщения всем пирам к которым есть подключение, используется во ViewModel
         public async Task BroadCastMessageTCPAsync(byte[] data, byte type = 1)
         {
             foreach (var peer in peers.Values)
@@ -391,10 +398,11 @@ namespace P2P_Chat.Core
             PublishEvent(new ChatEvent
             {
                 Timestamp = DateTime.Now,
-                Type = "MyMessage",
+                Type = "Message",
                 Name = name,
                 Ip = myIP.ToString(),
-                Text = Encoding.UTF8.GetString(data)
+                Text = Encoding.UTF8.GetString(data),
+                MyMessage = true
             });
         }
 
@@ -422,7 +430,6 @@ namespace P2P_Chat.Core
             }
         }
 
-        // отправка сообщения конкретному пиру
         private async Task SendMessageTCPAsync(Socket socket, byte type, byte[] data)
         {
             if (socket == null || !socket.Connected) return;
@@ -446,13 +453,11 @@ namespace P2P_Chat.Core
             return (type, data);
         }
 
-        // конвертация текста в байты
         private byte[] ConvertToByte(string message)
         {
             return Encoding.UTF8.GetBytes(message);
         }
 
-        // очистка данных
         public void Dispose()
         {
             isAlive = false;
@@ -480,15 +485,22 @@ namespace P2P_Chat.Core
 
         private void PublishEvent(ChatEvent e)
         {
-            lock (historyLock)
+            if (e.Type == "Message")
             {
-                string key = BuildEventKey(e);
-                if (!historyKeys.Add(key))
-                    return;
+                if (e.Ip == myIP.ToString())
+                {
+                    e.MyMessage = true;
+                }
+                lock (historyLock)
+                {
+                    string key = BuildEventKey(e);
+                    if (!historyKeys.Add(key))
+                        return;
 
-                history.Add(e);
+                    history.Add(e);
+                }
             }
-
+            
             nowEvent?.Invoke(e);
         }
 
@@ -502,25 +514,15 @@ namespace P2P_Chat.Core
 
         private void MergeReceivedHistory(IEnumerable<ChatEvent> incoming, IPEndPoint from)
         {
-            int added = 0;
 
             foreach (var e in incoming.OrderBy(x => x.Timestamp))
             {
-                bool isNew;
-                lock (historyLock)
-                {
-                    string key = BuildEventKey(e);
-                    isNew = historyKeys.Add(key);
-                    if (isNew)
-                        history.Add(e);
-                }
+                if (e.Type != "Message") continue;
 
-                if (isNew)
-                {
-                    nowEvent?.Invoke(e);
-                    added++;
-                }
+                PublishEvent(e);
             }
+
+            int added = history.Count;
 
             if (added > 0)
             {
