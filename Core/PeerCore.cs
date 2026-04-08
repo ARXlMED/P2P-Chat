@@ -121,28 +121,30 @@ namespace P2P_Chat.Core
 
                 return;
             }
-
-            var networkInterfaces = NetworkInterface.GetAllNetworkInterfaces();
-
-            foreach (var netInterface in networkInterfaces)
+            else
             {
-                if (netInterface.OperationalStatus != OperationalStatus.Up) continue;
-                if (netInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                var networkInterfaces = NetworkInterface.GetAllNetworkInterfaces();
 
-                var ipProps = netInterface.GetIPProperties();
-                foreach (var unicastAddr in ipProps.UnicastAddresses)
+                foreach (var netInterface in networkInterfaces)
                 {
-                    if (unicastAddr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
-                    if (unicastAddr.IPv4Mask == null) continue;
+                    if (netInterface.OperationalStatus != OperationalStatus.Up) continue;
+                    if (netInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
 
-                    IPAddress broadcastAddr = CalculateBroadcastAddress(unicastAddr.Address, unicastAddr.IPv4Mask);
-
-                    var endPoint = new IPEndPoint(broadcastAddr, udpPort);
-                    try
+                    var ipProps = netInterface.GetIPProperties();
+                    foreach (var unicastAddr in ipProps.UnicastAddresses)
                     {
-                        await udpSendSocket.SendToAsync(data, endPoint);
+                        if (unicastAddr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                        if (unicastAddr.IPv4Mask == null) continue;
+
+                        IPAddress broadcastAddr = CalculateBroadcastAddress(unicastAddr.Address, unicastAddr.IPv4Mask);
+
+                        var endPoint = new IPEndPoint(broadcastAddr, udpPort);
+                        try
+                        {
+                            await udpSendSocket.SendToAsync(data, endPoint);
+                        }
+                        catch { }
                     }
-                    catch { }
                 }
             }
         }
